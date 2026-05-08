@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Search Proxy Agent</title>
+    <meta charset="UTF-8">
+</head>
+<body>
+    <h1>Search Agent Active</h1>
+    <div id="status">Waiting for tasks...</div>
+    <div id="results"></div>
+
+    <script>
+        const MASTER_URL = 'https://garagesalemap.app/api/proxy-results';
+        const PROXY_ID = 'github-proxy-1';
+
+        // Listen for search tasks
+        async function pollForTasks() {
+            try {
+                const response = await fetch(`${MASTER_URL}/get-task?proxy_id=${PROXY_ID}`);
+                if (response.ok) {
+                    const task = await response.json();
+                    if (task && task.keyword) {
+                        await executeSearch(task);
+                    }
+                }
+            } catch (error) {
+                console.log('Polling error:', error);
+            }
+            
+            // Poll every 5 seconds
+            setTimeout(pollForTasks, 5000);
+        }
+
+        async function executeSearch(task) {
+            document.getElementById('status').textContent = `Searching: ${task.keyword} ${task.location}`;
+            
+            const query = `${task.keyword} ${task.location}`;
+            
+            try {
+                // Search DuckDuckGo HTML version (no rate limits!)
+                const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+                
+                const response = await fetch(searchUrl, {
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                        'Accept': 'text/html',
+                    }
+                });
+                
+                const html = await response.text();
+                const results = parseResults(html, query);
+                
+                // Send results back to master
+                await sendResults(task.task_id, results);
+                
+                document.getElementById('status').textContent = `Found ${results.length} results`;
+                document.getElementById('results').textContent = JSON.stringify(results, null, 2);
+                
+            } catch (error) {
+                console.error('Search error:', error);
+                await sendResults(task.task_id, [], error.message);
+            }
+        }
+
+        function parseResults(html, query) {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+            
+            const results = [];
+            const resultDivs = doc.querySelectorAll('.result');
+            
+            resultDivs.forEach((div, index) => {
+                try {
+                    const titleLink = div.querySelector('.result__a');
+                    const snippet = div.querySelector('.result__snippet');
+                    
+                    if (titleLink && snippet) {
+                        results.push({
+                            title: titleLink.textContent.trim(),
+                            url: titleLink.href,
+                            snippet: snippet.textContent.trim(),
+                            source: 'duckduckgo',
+                            proxy: PROXY_ID,
+                            rank: index + 1
+                        });
+                    }
+                } catch (e) {
+                    console.log('Parse error:', e);
+                }
+            });
+            
+            return results.slice(0, 20); // Top 20 results
+        }
+
+        async function sendResults(taskId, results, error = null) {
+            await fetch(`${MASTER_URL}/submit-results`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    task_id: taskId,
+                    proxy_id: PROXY_ID,
+                    results: results,
+                    error: error,
+                    timestamp: new Date().toISOString()
+                })
+            });
+        }
+
+        // Start polling when page loads
+        window.addEventListener('load', () => {
+            console.log('Search proxy agent started:', PROXY_ID);
+            pollForTasks();
+        });
+    </script>
+</body>
+</html>
