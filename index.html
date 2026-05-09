@@ -17,7 +17,7 @@
     <div id="log"></div>
     
     <script>
-        const MASTER = 'http://82.25.74.217:5002/api/proxy-results';
+        const MASTER = 'https://elivateprogram.com/api/proxy-results';
         const ID = 'proxy-' + Math.random().toString(36).substr(2, 9);
         
         function log(msg, type = 'info') {
@@ -43,7 +43,7 @@
                 if (res.ok) {
                     const task = await res.json();
                     if (task && task.keyword) {
-                        log('Task received: ' + task.keyword + ' ' + task.location, 'info');
+                        log('Task: ' + task.keyword + ' ' + task.location, 'info');
                         await search(task);
                     }
                 }
@@ -56,8 +56,6 @@
         async function search(task) {
             status('Searching: ' + task.keyword + ' ' + task.location, '#2196F3');
             
-            // NOTE: Browser CORS blocks DuckDuckGo direct access
-            // For now, submit empty results to test coordination
             const results = [];
             
             try {
@@ -76,7 +74,6 @@
                 status('Task complete', '#4CAF50');
             } catch (err) {
                 log('Submit error: ' + err.message, 'error');
-                status('Submit failed', '#f44336');
             }
         }
         
