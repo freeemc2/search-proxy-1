@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Craigslist Lead Agent</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: Arial, sans-serif; background: #1a1a2e; color: #eee; padding: 20px; }
+        h1 { color: #e94560; margin-bottom: 5px; font-size: 22px; }
+        .subtitle { color: #888; font-size: 13px; margin-bottom: 20px; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px; }
+        .card { background: #16213e; border-radius: 8px; padding: 15px; border: 1px solid #0f3460; }
+        .card h3 { color: #e94560; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; }
+        #statusBar { background: #16213e; border-radius: 8px; padding: 12px 15px; margin-bottom: 15px;
+            display: flex; align-items: center; gap: 15px; border: 1px solid #0f3460; }
+        #statusDot { width: 12px; height: 12px; border-radius: 50%; background: #888; flex-shrink: 0; }
+        #statusDot.running { background: #4CAF50; animation: pulse 1s infinite; }
+        #statusDot.error { background: #f44336; }
+        #statusDot.waiting { background: #FFA500; }
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+        #statusText { font-size: 14px; flex: 1; }
+        .stats { display: flex; gap: 20px; margin-left: auto; }
+        .stat { text-align: center; }
+        .stat .num { font-size: 20px; font-weight: bold; color: #e94560; }
+        .stat .lbl { font-size: 11px; color: #888; }
+        textarea { width: 100%; background: #0f3460; border: 1px solid #e94560; border-radius: 4px;
+            color: #eee; padding: 8px; font-size: 12px; font-family: monospace; resize: vertical; }
+        select, input[type=number], input[type=text] { width: 100%; background: #0f3460; border: 1px solid #333;
+            border-radius: 4px; color: #eee; padding: 8px; font-size: 13px; margin-bottom: 6px; }
+        select[multiple] { height: 140px; }
+        select option:checked { background: #e94560; }
+        .btn-row { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+        button { padding: 8px 14px; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: bold; }
+        .btn-start { background: #4CAF50; color: #fff; }
+        .btn-stop { background: #f44336; color: #fff; }
+        .btn-sm { background: #0f3460; color: #aaa; border: 1px solid #333; padding: 5px 10px; font-size: 11px; }
+        .btn-sm:hover { background: #e94560; color: #fff; }
+        #log { background: #0a0a1a; border-radius: 8px; height: 220px; overflow-y: auto;
+            padding: 10px; font-family: monospace; font-size: 11px; border: 1px solid #0f3460; }
+        .log-info { color: #64b5f6; } .log-ok { color: #81c784; }
+        .log-warn { color: #ffb74d; } .log-err { color: #e57373; }
+        .results-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 10px; }
+        .results-table th { background: #0f3460; color: #e94560; padding: 6px 8px; text-align: left; }
+        .results-table td { padding: 5px 8px; border-bottom: 1px solid #1a1a2e; color: #ccc; }
+        .results-table tr:hover td { background: #16213e; }
+        .results-table a { color: #64b5f6; text-decoration: none; }
+        .results-table a:hover { text-decoration: underline; }
+        label { font-size: 12px; color: #aaa; display: block; margin-bottom: 3px; }
+        .config-row { display: flex; gap: 10px; align-items: flex-end; margin-bottom: 8px; }
+        .config-row > div { flex: 1; }
+        #masterKey { font-family: monospace; background: #0f3460; border: 1px solid #e94560;
+            border-radius: 4px; color: #eee; padding: 6px; font-size: 12px; width: 100%; }
+    </style>
+</head>
+<body>
+    <h1>Craigslist Lead Agent</h1>
+    <p class="subtitle">Standalone — runs independently from other agents. Posts leads directly to master DB.</p>
+
+    <div id="statusBar">
+        <div id="statusDot"></div>
+        <span id="statusText">Idle — press Start</span>
+        <div class="stats">
+            <div class="stat"><div class="num" id="statLeads">0</div><div class="lbl">Leads Found</div></div>
+            <div class="stat"><div class="num" id="statSearches">0</div><div class="lbl">Searches</div></div>
+            <div class="stat"><div class="num" id="statQueue">0</div><div class="lbl">Queue Left</div></div>
+        </div>
+    </div>
+
+    <div class="grid">
+        <!-- Keywords -->
+        <div class="card">
+            <h3>Keywords</h3>
+            <label>Add from suggestions:</label>
+            <select id="kwSuggestions" multiple></select>
+            <div class="btn-row">
+                <button class="btn-sm" onclick="addSelected()">+ Add Selected</button>
+                <button class="btn-sm" onclick="addAll()">+ Add All</button>
+                <button class="btn-sm" onclick="clearKw()">Clear</button>
+            </div>
+            <label style="margin-top:10px">Active keywords (edit freely, one per line):</label>
+            <textarea id="kwActive" rows="8" placeholder="One keyword per line&#10;Use + for phrases: junk+removal"></textarea>
+        </div>
+
+        <!-- Locations + Settings -->
+        <div class="card">
+            <h3>Locations</h3>
+            <label>Select markets to search:</label>
+            <select id="locationSelect" multiple></select>
+            <div class="btn-row">
+                <button class="btn-sm" onclick="selectAllLocations()">Select All FL</button>
+                <button class="btn-sm" onclick="clearLocations()">Clear</button>
+            </div>
+
+            <h3 style="margin-top:14px">Settings</h3>
+            <div class="config-row">
+                <div>
+                    <label>Delay between searches (sec)</label>
+                    <input type="number" id="delay" value="6" min="3" max="60">
+                </div>
+                <div>
+                    <label>CL Category</label>
+                    <select id="clCategory">
+                        <option value="lbg">Labor Gigs (lbg)</option>
+                        <option value="all">All Categories</option>
+                        <option value="hsg">Household Gigs (hsg)</option>
+                        <option value="sss">Skilled Trades (sss)</option>
+                    </select>
+                </div>
+            </div>
+            <label>Master API URL</label>
+            <input type="text" id="masterUrl" value="https://api.elevatehomeprogram.com">
+            <label>Agent Key</label>
+            <input id="masterKey" type="password" value="change-this-secret" placeholder="X-Agent-Key value">
+        </div>
+    </div>
+
+    <!-- Controls -->
+    <div class="card" style="margin-bottom:15px">
+        <div class="btn-row">
+            <button class="btn-start" onclick="start()">▶ Start Agent</button>
+            <button class="btn-stop" onclick="stop()">■ Stop</button>
+            <button class="btn-sm" onclick="runOnce()">⚡ Run One Search Now</button>
+            <button class="btn-sm" onclick="clearLog()">Clear Log</button>
+            <button class="btn-sm" onclick="exportResults()">Export CSV</button>
+        </div>
+    </div>
+
+    <!-- Log -->
+    <div class="card" style="margin-bottom:15px">
+        <h3>Activity Log</h3>
+        <div id="log"></div>
+    </div>
+
+    <!-- Results -->
+    <div class="card">
+        <h3>Results This Session</h3>
+        <div style="overflow-x:auto">
+            <table class="results-table">
+                <thead><tr>
+                    <th>Time</th><th>Keyword</th><th>City</th><th>Title</th><th>Posted</th>
+                </tr></thead>
+                <tbody id="resultsBody"></tbody>
+            </table>
+        </div>
+    </div>
+
+<script>
+const SUGGESTED_KEYWORDS = [
+    // Handyman / Small
+    'handyman','repair','odd+jobs','patch','fix','caulk','touch+up',
+    // Cleaning
+    'maid','house+cleaning','cleaning+service','deep+clean','move+out+clean',
+    // Pressure / Exterior Cleaning
+    'pressure+washing','power+washing','soft+wash',
+    // Lawn / Outdoor
+    'lawn+care','lawn+mowing','yard+work','landscaping','grass+cutting',
+    'tree+trimming','tree+removal','stump+grinding','mulch','sod+installation',
+    'irrigation','sprinkler+repair','sprinkler+system',
+    // Pest
+    'pest+control','exterminator','termite','rodent+control','bed+bugs',
+    // Pool
+    'pool+cleaning','pool+service','pool+repair','pool+resurfacing','pool+pump',
+    // Hauling / Cleanup
+    'junk+removal','guys+with+truck','men+with+truck','hauling',
+    'debris+removal','job+site+cleanup','cleanout','moving+help',
+    // Interior
+    'drywall','sheetrock','framer','framing',
+    'painting','interior+painting','exterior+painting',
+    'flooring','tile','carpet','cabinet+install',
+    // Trim / Finish
+    'trim','doors','windows','baseboard','crown+molding','window+install',
+    // Roofing
+    'roofing','roof+repair','shingles','gutters','gutter+cleaning',
+    // Exterior / Structure
+    'siding','stucco','fence','fence+repair','deck','patio','concrete','pavers',
+    'screen+enclosure','garage+door',
+    // Remodel / Large
+    'kitchen+remodel','bathroom+remodel','renovation','remodel','room+addition',
+    // Mechanical
+    'ac+repair','hvac','plumber','plumbing','electrician','electrical',
+    // Storm / Hurricane
+    'hurricane+prep','hurricane+help','board+up+windows','storm+damage',
+    'tree+down','storm+cleanup','hurricane+windows','hurricane+shutters',
+    // Demo / Site
+    'demolition','demo','tear+down','land+clearing',
+    // Specialty
+    'solar','septic','foundation','waterproofing','insulation','garage+door',
+    // Intent phrases
+    'need+contractor','looking+for+contractor','ISO+contractor','recommend+handyman',
+];
+
+const LOCATIONS = {
+    'Sarasota FL':          { city: 'sarasota',      label: 'Sarasota' },
+    'North Port FL':        { city: 'sarasota',      label: 'North Port' },
+    'Venice FL':            { city: 'sarasota',      label: 'Venice' },
+    'Bradenton FL':         { city: 'sarasota',      label: 'Bradenton' },
+    'Tampa FL':             { city: 'tampa',         label: 'Tampa' },
+    'St Petersburg FL':     { city: 'tampa',         label: 'St Pete' },
+    'Clearwater FL':        { city: 'tampa',         label: 'Clearwater' },
+    'Orlando FL':           { city: 'orlando',       label: 'Orlando' },
+    'Miami FL':             { city: 'miami',         label: 'Miami' },
+    'Fort Lauderdale FL':   { city: 'broward',       label: 'Ft Lauderdale' },
+    'West Palm Beach FL':   { city: 'westpalmbeach', label: 'West Palm' },
+    'Jacksonville FL':      { city: 'jacksonville',  label: 'Jacksonville' },
+    'Gainesville FL':       { city: 'gainesville',   label: 'Gainesville' },
+    'Ocala FL':             { city: 'ocala',         label: 'Ocala' },
+    'Tallahassee FL':       { city: 'tallahassee',   label: 'Tallahassee' },
+    'Naples FL':            { city: 'swflorida',     label: 'Naples' },
+    'Fort Myers FL':        { city: 'swflorida',     label: 'Fort Myers' },
+    'Cape Coral FL':        { city: 'swflorida',     label: 'Cape Coral' },
+    'Port Charlotte FL':    { city: 'swflorida',     label: 'Port Charlotte' },
+    'Pensacola FL':         { city: 'pensacola',     label: 'Pensacola' },
+    'Daytona Beach FL':     { city: 'daytonabeach',  label: 'Daytona Beach' },
+    'Lakeland FL':          { city: 'lakeland',      label: 'Lakeland' },
+};
+
+// State
+let running = false;
+let taskQueue = [];
+let taskIndex = 0;
+let sessionLeads = 0;
+let sessionSearches = 0;
+let sessionResults = [];
+let timer = null;
+
+// Init
+window.onload = () => {
+    const kwSel = document.getElementById('kwSuggestions');
+    SUGGESTED_KEYWORDS.forEach(kw => {
+        const opt = document.createElement('option');
+        opt.value = kw;
+        opt.textContent = kw.replace(/\+/g, ' ');
+        kwSel.appendChild(opt);
+    });
+
+    const locSel = document.getElementById('locationSelect');
+    Object.entries(LOCATIONS).forEach(([loc, info]) => {
+        const opt = document.createElement('option');
+        opt.value = loc;
+        opt.textContent = info.label;
+        locSel.appendChild(opt);
+    });
+
+    // Default: sarasota-area locations selected
+    const defaultLocs = ['Sarasota FL','North Port FL','Venice FL','Bradenton FL'];
+    Array.from(locSel.options).forEach(o => {
+        if (defaultLocs.includes(o.value)) o.selected = true;
+    });
+
+    // Default keywords
+    const defaults = [
+        'handyman','repair','junk+removal','lawn+care','painting',
+        'drywall','roofing','plumbing','electrician','hurricane+prep',
+        'pressure+washing','tree+removal','remodel','flooring','hvac',
+        'guys+with+truck','pest+control','pool+cleaning','maid','framer',
+    ];
+    document.getElementById('kwActive').value = defaults.join('\n');
+};
+
+function addSelected() {
+    const sel = Array.from(document.getElementById('kwSuggestions').selectedOptions).map(o => o.value);
+    const current = getActiveKeywords();
+    const merged = [...new Set([...current, ...sel])];
+    document.getElementById('kwActive').value = merged.join('\n');
+}
+
+function addAll() {
+    document.getElementById('kwActive').value = SUGGESTED_KEYWORDS.join('\n');
+}
+
+function clearKw() { document.getElementById('kwActive').value = ''; }
+
+function selectAllLocations() {
+    Array.from(document.getElementById('locationSelect').options).forEach(o => o.selected = true);
+}
+function clearLocations() {
+    Array.from(document.getElementById('locationSelect').options).forEach(o => o.selected = false);
+}
+
+function getActiveKeywords() {
+    return document.getElementById('kwActive').value
+        .split('\n').map(k => k.trim()).filter(k => k.length > 0);
+}
+
+function getActiveLocations() {
+    return Array.from(document.getElementById('locationSelect').selectedOptions)
+        .map(o => ({ loc: o.value, city: LOCATIONS[o.value].city }));
+}
+
+function buildQueue() {
+    const keywords = getActiveKeywords();
+    const locations = getActiveLocations();
+    const tasks = [];
+    for (const kw of keywords) {
+        for (const { loc, city } of locations) {
+            tasks.push({ keyword: kw, location: loc, city });
+        }
+    }
+    // Shuffle so we don't hit same city repeatedly
+    for (let i = tasks.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [tasks[i], tasks[j]] = [tasks[j], tasks[i]];
+    }
+    return tasks;
+}
+
+function start() {
+    if (running) return;
+    running = true;
+    taskQueue = buildQueue();
+    taskIndex = 0;
+    setDot('running');
+    log('Agent started — ' + taskQueue.length + ' tasks queued', 'ok');
+    updateStats();
+    runNext();
+}
+
+function stop() {
+    running = false;
+    if (timer) clearTimeout(timer);
+    setDot('idle');
+    setStatusText('Stopped');
+    log('Agent stopped', 'warn');
+}
+
+function runOnce() {
+    const kws = getActiveKeywords();
+    const locs = getActiveLocations();
+    if (!kws.length || !locs.length) { log('No keywords or locations selected', 'err'); return; }
+    const task = { keyword: kws[0], location: locs[0].loc, city: locs[0].city };
+    runSearch(task);
+}
+
+async function runNext() {
+    if (!running) return;
+    if (taskIndex >= taskQueue.length) {
+        log('Full cycle complete — restarting queue', 'info');
+        taskQueue = buildQueue();
+        taskIndex = 0;
+    }
+    const task = taskQueue[taskIndex++];
+    updateStats();
+    await runSearch(task);
+
+    if (running) {
+        const delay = (parseInt(document.getElementById('delay').value) || 6) * 1000;
+        timer = setTimeout(runNext, delay);
+    }
+}
+
+async function runSearch(task) {
+    const master = document.getElementById('masterUrl').value.trim();
+    const key = document.getElementById('masterKey').value.trim();
+    const cat = document.getElementById('clCategory').value;
+
+    const clUrl = `https://${task.city}.craigslist.org/search/${cat}?query=${encodeURIComponent(task.keyword.replace(/\+/g,' '))}&format=rss`;
+    setStatusText('Searching: ' + task.keyword.replace(/\+/g,' ') + ' / ' + task.location);
+
+    try {
+        const proxyRes = await fetch(master + '/api/proxy-fetch?url=' + encodeURIComponent(clUrl), {
+            headers: { 'X-Agent-Key': key }
+        });
+
+        if (!proxyRes.ok) {
+            log('Proxy error ' + proxyRes.status + ' for ' + task.keyword, 'err');
+            return;
+        }
+
+        const xml = await proxyRes.text();
+        const doc = new DOMParser().parseFromString(xml, 'text/xml');
+        const items = doc.querySelectorAll('item');
+        const results = [];
+
+        items.forEach(item => {
+            const title = item.querySelector('title')?.textContent?.trim() || '';
+            const link = item.querySelector('link')?.textContent?.trim() || '';
+            const desc = item.querySelector('description')?.textContent || '';
+            const pubDate = item.querySelector('pubDate')?.textContent || '';
+            const plain = desc.replace(/<[^>]+>/g, '').trim();
+
+            if (title && link) {
+                results.push({
+                    title,
+                    url: link,
+                    description: plain.slice(0, 500),
+                    post_text: plain,
+                    posted_at: pubDate ? new Date(pubDate).toISOString() : null
+                });
+            }
+        });
+
+        sessionSearches++;
+        log(`[${task.keyword.replace(/\+/g,' ')}] ${task.city} → ${results.length} posts found`, results.length > 0 ? 'ok' : 'info');
+
+        if (results.length > 0) {
+            const submitRes = await fetch(master + '/api/leads/submit-batch', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Agent-Key': key },
+                body: JSON.stringify({
+                    source: 'craigslist',
+                    keyword: task.keyword.replace(/\+/g,' '),
+                    location: task.location,
+                    results
+                })
+            });
+            const out = await submitRes.json();
+            const added = out.leads_added || 0;
+            sessionLeads += added;
+            if (added > 0) log(`  → ${added} new leads saved to DB`, 'ok');
+
+            results.slice(0, 3).forEach(r => addResultRow(task, r));
+        }
+
+        updateStats();
+    } catch (err) {
+        log('Error: ' + err.message, 'err');
+        setDot('error');
+    }
+}
+
+function log(msg, type = 'info') {
+    const el = document.getElementById('log');
+    const div = document.createElement('div');
+    div.className = 'log-' + type;
+    div.textContent = new Date().toLocaleTimeString() + ' ' + msg;
+    el.prepend(div);
+    if (el.children.length > 200) el.removeChild(el.lastChild);
+}
+
+function clearLog() { document.getElementById('log').innerHTML = ''; }
+
+function setDot(state) {
+    const d = document.getElementById('statusDot');
+    d.className = state === 'running' ? 'running' : state === 'error' ? 'error' : '';
+}
+
+function setStatusText(msg) { document.getElementById('statusText').textContent = msg; }
+
+function updateStats() {
+    document.getElementById('statLeads').textContent = sessionLeads;
+    document.getElementById('statSearches').textContent = sessionSearches;
+    document.getElementById('statQueue').textContent = Math.max(0, taskQueue.length - taskIndex);
+}
+
+function addResultRow(task, result) {
+    const tbody = document.getElementById('resultsBody');
+    const tr = document.createElement('tr');
+    const date = result.posted_at ? new Date(result.posted_at).toLocaleDateString() : '—';
+    tr.innerHTML = `
+        <td>${new Date().toLocaleTimeString()}</td>
+        <td>${task.keyword.replace(/\+/g,' ')}</td>
+        <td>${task.city}</td>
+        <td><a href="${result.url}" target="_blank">${result.title.slice(0, 60)}</a></td>
+        <td>${date}</td>
+    `;
+    tbody.insertBefore(tr, tbody.firstChild);
+    if (tbody.children.length > 100) tbody.removeChild(tbody.lastChild);
+    sessionResults.push({ ...task, ...result });
+}
+
+function exportResults() {
+    if (!sessionResults.length) { alert('No results yet.'); return; }
+    const rows = [['keyword','location','city','title','url','posted_at']];
+    sessionResults.forEach(r => rows.push([r.keyword, r.location, r.city, r.title, r.url, r.posted_at || '']));
+    const csv = rows.map(r => r.map(v => '"' + String(v).replace(/"/g,'""') + '"').join(',')).join('\n');
+    const a = document.createElement('a');
+    a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+    a.download = 'craigslist_leads_' + new Date().toISOString().slice(0,10) + '.csv';
+    a.click();
+}
+</script>
+</body>
+</html>
