@@ -12,74 +12,145 @@
     </style>
 </head>
 <body>
-    <h1>🤖 Distributed Search Agent</h1>
+    <h1>Search Proxy Agent</h1>
     <div id="status">Initializing...</div>
     <div id="log"></div>
-    
+
     <script>
-        const MASTER = 'https://elivateprogram.com/api/proxy-results';
+        const MASTER = 'https://api.elevatehomeprogram.com';
+        const AGENT_KEY = 'change-this-secret'; // must match AGENT_KEY in VPS .env
         const ID = 'proxy-' + Math.random().toString(36).substr(2, 9);
-        
+
+        const CL_CITIES = {
+            'sarasota': 'sarasota',
+            'north port': 'sarasota',
+            'venice': 'sarasota',
+            'bradenton': 'sarasota',
+            'tampa': 'tampa',
+            'st pete': 'tampa',
+            'clearwater': 'tampa',
+            'orlando': 'orlando',
+            'miami': 'miami',
+            'fort lauderdale': 'broward',
+            'jacksonville': 'jacksonville',
+            'gainesville': 'gainesville',
+            'ocala': 'ocala',
+            'tallahassee': 'tallahassee',
+            'naples': 'swflorida',
+            'fort myers': 'swflorida',
+            'cape coral': 'swflorida',
+        };
+
+        function getCLCity(location) {
+            const loc = location.toLowerCase();
+            for (const [key, city] of Object.entries(CL_CITIES)) {
+                if (loc.includes(key)) return city;
+            }
+            return 'sarasota';
+        }
+
         function log(msg, type = 'info') {
             const e = document.createElement('div');
             e.className = 'entry ' + type;
             e.textContent = new Date().toLocaleTimeString() + ' - ' + msg;
             document.getElementById('log').prepend(e);
         }
-        
-        function status(msg, color) {
+
+        function setStatus(msg, color) {
             const s = document.getElementById('status');
             s.textContent = msg;
             s.style.background = color || '#4CAF50';
         }
-        
+
         async function poll() {
             try {
-                const res = await fetch(MASTER + '/get-task?proxy_id=' + ID);
-                if (res.status === 204) {
-                    status('Waiting for tasks...', '#FFA500');
+                const res = await fetch(MASTER + '/api/jobs/next?agent=' + ID, {
+                    headers: { 'X-Agent-Key': AGENT_KEY }
+                });
+                if (!res.ok) {
+                    log('Poll error: HTTP ' + res.status, 'error');
                     return;
                 }
-                if (res.ok) {
-                    const task = await res.json();
-                    if (task && task.keyword) {
-                        log('Task: ' + task.keyword + ' ' + task.location, 'info');
-                        await search(task);
-                    }
+                const data = await res.json();
+                if (!data.job_id) {
+                    setStatus('Waiting for tasks...', '#FFA500');
+                    return;
                 }
+                await runJob(data);
             } catch (err) {
                 log('Poll error: ' + err.message, 'error');
-                status('Connection error', '#f44336');
+                setStatus('Connection error', '#f44336');
             }
         }
-        
-        async function search(task) {
-            status('Searching: ' + task.keyword + ' ' + task.location, '#2196F3');
-            
+
+        async function fetchCraigslist(keyword, location) {
+            const city = getCLCity(location);
+            const clUrl = `https://${city}.craigslist.org/search/all?query=${encodeURIComponent(keyword)}&format=rss`;
+
+            const proxyRes = await fetch(MASTER + '/api/proxy-fetch?url=' + encodeURIComponent(clUrl), {
+                headers: { 'X-Agent-Key': AGENT_KEY }
+            });
+            if (!proxyRes.ok) throw new Error('Proxy fetch failed: ' + proxyRes.status);
+
+            const xml = await proxyRes.text();
+            const doc = new DOMParser().parseFromString(xml, 'text/xml');
+            const items = doc.querySelectorAll('item');
+
             const results = [];
-            
+            items.forEach(item => {
+                const title = item.querySelector('title')?.textContent?.trim() || '';
+                const link = item.querySelector('link')?.textContent?.trim() || '';
+                const desc = item.querySelector('description')?.textContent || '';
+                const pubDate = item.querySelector('pubDate')?.textContent || '';
+                const plainText = desc.replace(/<[^>]+>/g, '').trim();
+
+                if (title && link) {
+                    results.push({
+                        title,
+                        url: link,
+                        description: plainText.slice(0, 500),
+                        post_text: plainText,
+                        posted_at: pubDate ? new Date(pubDate).toISOString() : null
+                    });
+                }
+            });
+
+            return results;
+        }
+
+        async function runJob(task) {
+            setStatus('Searching: ' + task.keyword + ' / ' + task.location, '#2196F3');
+            log('Job ' + task.job_id + ': ' + task.source + ' | ' + task.keyword + ' | ' + task.location, 'info');
+
+            let results = [];
+
             try {
-                await fetch(MASTER + '/submit-results', {
+                if (task.source === 'craigslist') {
+                    results = await fetchCraigslist(task.keyword, task.location);
+                    log('Parsed ' + results.length + ' Craigslist posts', 'info');
+                }
+
+                const res = await fetch(MASTER + '/api/jobs/' + task.job_id + '/submit', {
                     method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        task_id: task.task_id,
-                        proxy_id: ID,
-                        results: results,
-                        completed_at: new Date().toISOString()
-                    })
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Agent-Key': AGENT_KEY
+                    },
+                    body: JSON.stringify({ results })
                 });
-                
-                log('Submitted ' + results.length + ' results', 'success');
-                status('Task complete', '#4CAF50');
+
+                const out = await res.json();
+                log('Submitted: ' + (out.leads_added || 0) + ' leads added', 'success');
+                setStatus('Ready', '#4CAF50');
             } catch (err) {
-                log('Submit error: ' + err.message, 'error');
+                log('Job error: ' + err.message, 'error');
+                setStatus('Error - retrying', '#f44336');
             }
         }
-        
+
         log('Agent started: ' + ID, 'success');
-        status('Agent active - polling every 5s', '#4CAF50');
-        setInterval(poll, 5000);
+        setStatus('Agent active - polling every 10s', '#4CAF50');
+        setInterval(poll, 10000);
         poll();
     </script>
 </body>
